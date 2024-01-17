@@ -12,9 +12,7 @@ import (
 	"afaf.internal/pkg/rabbitmq"
 )
 
-// message parsing nya gimana? isinya apa aja
-// buat queue untuk membuat consumer
-// consumer.create
+// TODO: consumers that created from queue open new connections when reopen
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -22,17 +20,20 @@ func main() {
 
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn, err := rabbitmq.ConnectRabbitMQ(rbmqURI)
+	conn := rabbitmq.NewConnection(rbmqURI)
+	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
 	// Create and run consumers
 	// dummy cunsomer
 	smsConsumer := rabbitmq.NewConsumer(conn, "sms", "sms")
+	log.Print("start sms consumer")
 	go smsConsumer.Start(ctx, messageHandlerPrintOnly)
 
-	// creation cunsomer
+	// // creation cunsomer
 	creationConsumer := rabbitmq.NewConsumer(conn, "CunsomerCreation", "cunsomer-creation")
+	log.Print("start CunsomerCreation consumer")
 	go creationConsumer.Start(ctx, messageHandlerCreateCunsomer)
 
 	// Wait for interrupt signal to gracefully shutdown

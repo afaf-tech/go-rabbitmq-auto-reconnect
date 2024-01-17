@@ -26,7 +26,8 @@ type CunsomerCreate struct {
 func main() {
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn, err := rabbitmq.ConnectRabbitMQ(rbmqURI)
+	conn := rabbitmq.NewConnection(rbmqURI)
+	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
