@@ -32,7 +32,7 @@ func main() {
 	go smsConsumer.Start(ctx, messageHandlerPrintOnly)
 
 	// creation cunsomer
-	creationConsumer := rabbitmq.NewConsumer(conn, "creationCunsomer", "cunsomer.create")
+	creationConsumer := rabbitmq.NewConsumer(conn, "CunsomerCreation", "cunsomer-creation")
 	go creationConsumer.Start(ctx, messageHandlerCreateCunsomer)
 
 	// Wait for interrupt signal to gracefully shutdown
@@ -67,19 +67,24 @@ type CunsomerCreate struct {
 
 func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q string, deliveries *<-chan amqp.Delivery) {
 	for d := range *deliveries {
-		//handle the custom message
+		// handle the custom message
 		log.Printf("Got message from consumer %s, queue %s, message %s", cName, q, d.Body)
+
 		// check ?
-		// create cunsomer
+		// create consumer
 		var cunsomerCreate CunsomerCreate
 		err := json.Unmarshal(d.Body, &cunsomerCreate)
 		if err != nil {
-			failOnError(err, "handle Create Cunsomer")
+			log.Printf("err parsing %s", err.Error())
 			continue
 		}
 
+		// Use mutex before creating a new consumer
 		newCunsomer := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName)
-		newCunsomer.Start(context.Background(), messageHandlerPrintOnly)
+
+		// Start the new consumer in a goroutine
+		go newCunsomer.Start(context.Background(), messageHandlerPrintOnly)
+
 		d.Ack(false)
 	}
 }

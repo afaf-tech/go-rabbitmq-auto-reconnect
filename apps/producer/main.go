@@ -40,8 +40,8 @@ func main() {
 		log.Fatalf("exchange.declare: %s", err)
 	}
 
-	cunsomerExchange := "cunsomer"
-	err = ch.ExchangeDeclare(cunsomerExchange, "direct", true, false, false, false, nil)
+	cunsomerCreationExchange := "CunsomerCreationExc"
+	err = ch.ExchangeDeclare(cunsomerCreationExchange, "direct", true, false, false, false, nil)
 	if err != nil {
 		log.Fatalf("exchange.declare: %s", err)
 	}
@@ -67,19 +67,19 @@ func main() {
 		}
 	}
 
-	cunsomerCreateRouteQueue := "cunsomer.create"
+	cunsomerCreateRouteQueue := "cunsomer-creation"
 	_, err = ch.QueueDeclare(cunsomerCreateRouteQueue, true, false, false, false, nil)
 	if err != nil {
 		log.Fatalf("queue.declare: %v", err)
 	}
 
-	err = ch.QueueBind(cunsomerCreateRouteQueue, cunsomerCreateRouteQueue, cunsomerExchange, false, nil)
+	err = ch.QueueBind(cunsomerCreateRouteQueue, cunsomerCreateRouteQueue, cunsomerCreationExchange, false, nil)
 	if err != nil {
 		log.Fatalf("queue.bind: %v", err)
 	}
 
 	ctx := context.Background()
-	// // publish to notification exchange and route sms
+	// publish to notification exchange and route sms
 	// for i := 0; i < 10; i++ {
 	// 	notif, err := json.Marshal(Notif{
 	// 		Title:   "Transfer duit masuk",
@@ -101,20 +101,18 @@ func main() {
 
 	// publish create cunsomer
 	cunsomerCreate, err := json.Marshal(CunsomerCreate{
-		Name:      "sms2",
+		Name:      "sms4",
 		QueueName: "sms",
 	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	message := amqp091.Publishing{
-		Headers: amqp091.Table{
-			"sample": "value",
-		},
-		Body: cunsomerCreate,
+		Headers: amqp091.Table{},
+		Body:    cunsomerCreate,
 	}
 
-	err = ch.PublishWithContext(ctx, notifExchange, cunsomerCreateRouteQueue, false, false, message)
+	err = ch.PublishWithContext(ctx, cunsomerCreationExchange, cunsomerCreateRouteQueue, false, false, message)
 	failOnError(err, "Publishing cunsomer.create message err")
 
 	// Wait for interrupt signal to gracefully shutdown
