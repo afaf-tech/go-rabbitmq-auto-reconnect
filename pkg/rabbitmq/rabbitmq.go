@@ -9,14 +9,100 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Connection represents a RabbitMQ connection
+const (
+	retryDuration = time.Second * 5
+)
+
 type Connection struct {
 	*amqp.Connection
-	uri string
-	mu  sync.Mutex // Mutex to synchronize access to the connection
+	uri          string
+	mu           sync.RWMutex // Mutex to synchronize access to the connection
+	reconnecting bool         // Flag to indicate ongoing reconnection
 }
 
-// Consumer represents a RabbitMQ consumer
+// TODO: add config parameter amqp.Config{}
+// NewConnection creates a new Connection object without establishing the connection
+func NewConnection(url string) *Connection {
+	return &Connection{uri: url}
+}
+
+// Connect establishes the RabbitMQ connection
+func (c *Connection) Connect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.reconnecting {
+		return nil // Already in the process of reconnecting
+	}
+
+	for {
+		conn, err := amqp.Dial(c.uri)
+		if err == nil {
+			log.Println("Connected to RabbitMQ")
+			c.Connection = conn
+			c.reconnecting = false
+
+			return nil
+		}
+
+		if err, ok := err.(*amqp.Error); ok {
+			// Handle AMQP errors
+			log.Printf("AMQP Error: Code=%d, Reason=%s. Retrying...", err.Code, err.Reason)
+		} else {
+			// Handle other errors
+			log.Printf("Failed to connect to RabbitMQ: %v. Retrying in 5 seconds.", err)
+		}
+
+		c.reconnecting = true
+		time.Sleep(retryDuration) // Adjust the delay as needed
+	}
+
+}
+
+func (c *Connection) Reconnect() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.reconnecting {
+		log.Println("Already in the process of reconnecting. Skipping.")
+		return nil
+	}
+
+	c.reconnecting = true
+
+	conn, err := amqp.Dial(c.uri)
+	if err == nil {
+		log.Println("Connected to RabbitMQ")
+		c.Connection = conn
+		c.reconnecting = false
+		return nil
+	}
+
+	log.Printf("Failed to reconnect to RabbitMQ: %v. Retrying in 5 seconds.", err)
+
+	c.reconnecting = false
+	return err
+}
+
+func (c *Connection) IsClosed() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.Connection == nil || c.Connection.IsClosed()
+}
+
+func (c *Connection) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.Connection != nil {
+		err := c.Connection.Close()
+		c.Connection = nil
+		return err
+	}
+	return nil
+}
+
 type Consumer struct {
 	conn      *Connection
 	channel   *amqp.Channel
@@ -32,7 +118,6 @@ func NewConsumer(conn *Connection, name, queue string) *Consumer {
 		defer ch.Close()
 	}
 
-	// Declare the queue
 	_, err = ch.QueueDeclare(
 		queue, // name
 		true,  // durable
@@ -56,23 +141,13 @@ func (c *Consumer) Start(ctx context.Context, fn func(*Connection, string, strin
 	var err error
 
 	for {
-		if c.conn.IsClosed() {
-			log.Printf("[%s] Connection is closed. Attempting to reconnect...", c.name)
-			err = c.conn.Reconnect()
-			if err != nil {
-				log.Printf("[%s] Failed to reconnect: %v. Retrying in 5 seconds.", c.name, err)
-				time.Sleep(5 * time.Second)
-				continue
-			}
-			log.Printf("[%s] Reconnected to RabbitMQ", c.name)
-
-			c.conn.mu.Lock()
-			c.channel, err = c.conn.Channel()
-			c.conn.mu.Unlock()
-
-			failOnError(err, "Reopen a channel")
+		err = c.checkConnection()
+		if err != nil {
+			time.Sleep(retryDuration)
+			continue
 		}
 
+		// Register the consumer and handle any errors
 		msgs, err := c.channel.ConsumeWithContext(
 			ctx,
 			c.queueName, // queue
@@ -85,73 +160,43 @@ func (c *Consumer) Start(ctx context.Context, fn func(*Connection, string, strin
 		)
 		if err != nil {
 			log.Printf("[%s] Failed to register a consumer: %v. Retrying in 5 seconds.", c.name, err)
-
-			c.conn.mu.Lock()
-			c.channel.Close() // Close the channel before retrying
-			c.conn.mu.Unlock()
-
-			time.Sleep(5 * time.Second)
+			time.Sleep(retryDuration)
 			continue
 		}
 
+		// Execute the user-defined function
 		fn(c.conn, c.name, c.queueName, &msgs)
 
-		c.conn.mu.Lock()
-		c.channel.Close()
-		c.conn.mu.Unlock()
+		// Close the channel after consuming messages
+		if c.channel != nil {
+			c.channel.Close()
+		}
 	}
 }
 
-// Close closes the RabbitMQ connection
-func (c *Connection) Close() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.Connection != nil {
-		err := c.Connection.Close()
-		c.Connection = nil
-		return err
-	}
-	return nil
-}
-
-// Reconnect attempts to reconnect to RabbitMQ
-func (c *Connection) Reconnect() error {
-	if err := c.Close(); err != nil {
-		log.Printf("Error closing RabbitMQ connection: %v", err)
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+func (c *Consumer) checkConnection() error {
 	var err error
-	conn, err := ConnectRabbitMQ(c.uri)
-	if err == nil {
-		c.Connection = conn.Connection
+	if c.conn.IsClosed() {
+		log.Printf("[%s] Connection is closed. Attempting to reconnect...", c.name)
+		err = c.conn.Reconnect()
+		if err != nil {
+			log.Printf("[%s] Failed to reconnect: %v. Retrying in 5 seconds.", c.name, err)
+			return err
+		}
+		log.Printf("[%s] Reconnected to RabbitMQ", c.name)
 	}
+
+	if c.channel == nil || c.channel.IsClosed() {
+		log.Printf("[%s] Channel is nil or closed. Trying to reopen...", c.name)
+		c.channel, err = c.conn.Channel()
+		if err != nil {
+			log.Printf("[%s] Failed to reopen channel: %v. Retrying in 5 seconds.", c.name, err)
+			return err
+		}
+		log.Printf("[%s] Channel reopened", c.name)
+	}
+
 	return err
-}
-
-// ConnectRabbitMQ creates a new RabbitMQ connection
-func ConnectRabbitMQ(url string) (*Connection, error) {
-	conn, err := amqp.Dial(url)
-	if err == nil {
-		log.Println("Connected to RabbitMQ")
-		return &Connection{Connection: conn, uri: url}, nil
-	}
-
-	if err, ok := err.(*amqp.Error); ok {
-		// Handle AMQP errors
-		log.Printf("AMQP Error: Code=%d, Reason=%s. Retrying...", err.Code, err.Reason)
-	} else {
-		// Handle other errors
-		log.Printf("Failed to connect to RabbitMQ: %v. Retrying in 5 seconds.", err)
-	}
-
-	const retryDuration = 5 * time.Second
-	time.Sleep(retryDuration) // Adjust the delay as needed
-
-	return ConnectRabbitMQ(url)
 }
 
 // failOnError logs an error and exits the application if the error is not nil
@@ -161,9 +206,9 @@ func failOnError(err error, msg string) {
 	}
 }
 
-// TODO: publisher?
+// TODO: Producer?
 /*
-// Publisher represents a RabbitMQ publisher
+// Producer represents a RabbitMQ Pbulisher
 type Publisher struct {
 	connection *Connection
 	exchange   string
