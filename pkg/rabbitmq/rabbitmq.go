@@ -13,8 +13,13 @@ const (
 	retryDuration = time.Second * 5
 )
 
+type Config struct {
+	*amqp.Config
+}
+
 type Connection struct {
 	*amqp.Connection
+	config       *amqp.Config
 	uri          string
 	mu           sync.RWMutex // Mutex to synchronize access to the connection
 	reconnecting bool         // Flag to indicate ongoing reconnection
@@ -22,8 +27,9 @@ type Connection struct {
 
 // TODO: add config parameter amqp.Config{}
 // NewConnection creates a new Connection object without establishing the connection
-func NewConnection(url string) *Connection {
-	return &Connection{uri: url}
+func NewConnection(url string, config *amqp.Config) *Connection {
+
+	return &Connection{uri: url, config: config}
 }
 
 // Connect establishes the RabbitMQ connection
@@ -36,7 +42,7 @@ func (c *Connection) Connect() error {
 	}
 
 	for {
-		conn, err := amqp.Dial(c.uri)
+		conn, err := amqp.DialConfig(c.uri, *c.config)
 		if err == nil {
 			log.Println("Connected to RabbitMQ")
 			c.Connection = conn
@@ -70,7 +76,7 @@ func (c *Connection) Reconnect() error {
 
 	c.reconnecting = true
 
-	conn, err := amqp.Dial(c.uri)
+	conn, err := amqp.DialConfig(c.uri, *c.config)
 	if err == nil {
 		log.Println("Connected to RabbitMQ")
 		c.Connection = conn
@@ -110,12 +116,12 @@ type Consumer struct {
 	name      string
 }
 
-func NewConsumer(conn *Connection, name, queue string) *Consumer {
+func NewConsumer(conn *Connection, name, queue string) (*Consumer, error) {
 	//TODO: add option to bind/declare queue?
 	ch, err := conn.Channel()
 	if err != nil {
-		failOnError(err, "Failed to open a channel")
-		defer ch.Close()
+		log.Printf("[%s], Failed to open a channel", name)
+		return nil, err
 	}
 
 	_, err = ch.QueueDeclare(
@@ -126,14 +132,18 @@ func NewConsumer(conn *Connection, name, queue string) *Consumer {
 		false, // no-wait
 		nil,   // arguments
 	)
-	failOnError(err, "Failed to declare a queue")
+	if err != nil {
+		log.Printf("[%s], Failed to declare queue", name)
+		defer ch.Close()
+		return nil, err
+	}
 
 	return &Consumer{
 		conn:      conn,
 		channel:   ch,
 		queueName: queue,
 		name:      name,
-	}
+	}, nil
 }
 
 // Start begins the consumer's main loop
