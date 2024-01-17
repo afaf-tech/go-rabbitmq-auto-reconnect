@@ -6,17 +6,17 @@ Explores the hypothesis of using a single connection for many channels, both for
 
 
 ## Project Structure
-.
-├── apps
-│   ├── consumer            # Consumer service
-│   ├── producer            # Producer service
-├── pkg                    
-│   ├── rabbitmq            # rabbitmq package
-└── go.work
-└── docker-compose.yml
-└── README.md
-└── LICENSE.md
-└── ...
+    .
+    ├── apps
+    │   ├── consumer            # Consumer service
+    │   ├── producer            # Producer service
+    ├── pkg                    
+    │   ├── rabbitmq            # rabbitmq package
+    └── go.work
+    └── docker-compose.yml
+    └── README.md
+    └── LICENSE.md
+    └── ...
 
 ## Requirements
 - go 1.21.5
