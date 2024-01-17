@@ -12,8 +12,6 @@ import (
 	"afaf.internal/pkg/rabbitmq"
 )
 
-// TODO: consumers that created from queue open new connections when reopen
-
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

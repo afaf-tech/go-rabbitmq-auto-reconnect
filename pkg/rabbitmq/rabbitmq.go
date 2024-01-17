@@ -206,9 +206,9 @@ func failOnError(err error, msg string) {
 	}
 }
 
-// TODO: publisher?
+// TODO: Producer?
 /*
-// Publisher represents a RabbitMQ publisher
+// Producer represents a RabbitMQ Pbulisher
 type Publisher struct {
 	connection *Connection
 	exchange   string
