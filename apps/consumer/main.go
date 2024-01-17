@@ -18,19 +18,23 @@ func main() {
 
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn := rabbitmq.NewConnection(rbmqURI)
+	conn := rabbitmq.NewConnection(rbmqURI, &amqp.Config{
+		ChannelMax: 25, // Limit max channel per connection
+	})
 	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
 	// Create and run consumers
 	// dummy cunsomer
-	smsConsumer := rabbitmq.NewConsumer(conn, "sms", "sms")
+	smsConsumer, err := rabbitmq.NewConsumer(conn, "sms", "sms")
+	failOnError(err, "start cunsomer sms")
 	log.Print("start sms consumer")
 	go smsConsumer.Start(ctx, messageHandlerPrintOnly)
 
 	// // creation cunsomer
-	creationConsumer := rabbitmq.NewConsumer(conn, "CunsomerCreation", "cunsomer-creation")
+	creationConsumer, err := rabbitmq.NewConsumer(conn, "CunsomerCreation", "cunsomer-creation")
+	failOnError(err, "start creation cunsomer")
 	log.Print("start CunsomerCreation consumer")
 	go creationConsumer.Start(ctx, messageHandlerCreateCunsomer)
 
@@ -66,11 +70,8 @@ type CunsomerCreate struct {
 
 func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q string, deliveries *<-chan amqp.Delivery) {
 	for d := range *deliveries {
-		// handle the custom message
 		log.Printf("Got message from consumer %s, queue %s, message %s", cName, q, d.Body)
 
-		// check ?
-		// create consumer
 		var cunsomerCreate CunsomerCreate
 		err := json.Unmarshal(d.Body, &cunsomerCreate)
 		if err != nil {
@@ -78,8 +79,13 @@ func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q str
 			continue
 		}
 
-		// Use mutex before creating a new consumer
-		newCunsomer := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName)
+		log.Printf("Creating consumer %s", cunsomerCreate.Name)
+		newCunsomer, err := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName)
+		if err != nil {
+			log.Printf("Create consumer [%s] Failed", cunsomerCreate.Name)
+			d.Ack(false)
+			continue
+		}
 
 		// Start the new consumer in a goroutine
 		go newCunsomer.Start(context.Background(), messageHandlerPrintOnly)

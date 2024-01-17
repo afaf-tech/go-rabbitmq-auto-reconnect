@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -26,7 +27,7 @@ type CunsomerCreate struct {
 func main() {
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn := rabbitmq.NewConnection(rbmqURI)
+	conn := rabbitmq.NewConnection(rbmqURI, &amqp091.Config{})
 	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
@@ -101,20 +102,22 @@ func main() {
 	// }
 
 	// publish create cunsomer
-	cunsomerCreate, err := json.Marshal(CunsomerCreate{
-		Name:      "sms4",
-		QueueName: "sms",
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	message := amqp091.Publishing{
-		Headers: amqp091.Table{},
-		Body:    cunsomerCreate,
-	}
+	for i := 0; i < 5; i++ {
+		cunsomerCreate, err := json.Marshal(CunsomerCreate{
+			Name:      fmt.Sprintf("sms-%d", i),
+			QueueName: "sms",
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		message := amqp091.Publishing{
+			Headers: amqp091.Table{},
+			Body:    cunsomerCreate,
+		}
 
-	err = ch.PublishWithContext(ctx, cunsomerCreationExchange, cunsomerCreateRouteQueue, false, false, message)
-	failOnError(err, "Publishing cunsomer.create message err")
+		err = ch.PublishWithContext(ctx, cunsomerCreationExchange, cunsomerCreateRouteQueue, false, false, message)
+		failOnError(err, "Publishing cunsomer.create message err")
+	}
 
 	// Wait for interrupt signal to gracefully shutdown
 	signalCh := make(chan os.Signal, 1)
