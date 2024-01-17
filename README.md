@@ -3,17 +3,17 @@
 This project demonstrates a simple implementation of a RabbitMQ consumer and producer in Go with automatic reconnection capabilities.
 
 ## Project Structure
-
-project-root/
-│
-├── apps/
-│ ├── consumer/
-│ ├── producer/
-├── pkg/
-│ ├── rabbitmq/
-├── docker-compose.yml
-├── go.work
-
+.
+├── apps
+│   ├── consumer            # Consumer service
+│   ├── producer            # Producer service
+├── pkg                    
+│   ├── rabbitmq            # rabbitmq package
+└── go.work
+└── docker-compose.yml
+└── README.md
+└── LICENSE.md
+└── ...
 
 ## Requirements
 - go 1.21.5
@@ -29,10 +29,7 @@ project-root/
 ```bash
     cd go-rabbitmq-auto-reconnect
 ```
-3. Install dependencies:
-```bash
-    go install ./...
-```
+
 4. Run RabbitMQ server
 ```bash
     go install ./...
@@ -48,7 +45,8 @@ docker-compose up -d
 ```bash
     go run main.go
 ```
-3. Open new terminal & Run Producer service:
+3. Open new terminal Navigate to the producer directory
+4. Run Producer service:
 ```bash
     go run main.go
 ```
@@ -58,7 +56,7 @@ read more [PRODUCER.md](./apps/producer/README.md)
 ## Backlog
 - Proper Logging
 - Producer function
-- Improve the Consumer connection and channel mechanism
+- Improve the Consumer connection and channel abstraction
 
 
 ## License
