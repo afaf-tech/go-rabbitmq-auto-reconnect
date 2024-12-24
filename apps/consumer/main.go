@@ -19,7 +19,7 @@ func main() {
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
 	conn := rabbitmq.NewConnection(rbmqURI, &amqp.Config{
-		ChannelMax: 25, // Limit max channel per connection
+		ChannelMax: 6, // Limit max channel per connection
 	})
 	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
@@ -82,7 +82,11 @@ func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q str
 		log.Printf("Creating consumer %s", cunsomerCreate.Name)
 		newCunsomer, err := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName)
 		if err != nil {
-			log.Printf("Create consumer [%s] Failed", cunsomerCreate.Name)
+			if err, ok := err.(*amqp.Error); err.Reason == amqp.ErrChannelMax.Reason && ok {
+				log.Printf("Create consumer [%s] Failed, channel is max", cunsomerCreate.Name)
+			} else {
+				log.Printf("Create consumer [%s] Failed", cunsomerCreate.Name)
+			}
 			d.Ack(false)
 			continue
 		}
