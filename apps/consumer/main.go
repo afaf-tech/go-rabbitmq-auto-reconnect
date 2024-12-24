@@ -18,22 +18,32 @@ func main() {
 
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn := rabbitmq.NewConnection(rbmqURI, &amqp.Config{
-		ChannelMax: 25, // Limit max channel per connection
-	})
+	conn := rabbitmq.NewConnection(&rabbitmq.Config{URI: rbmqURI, MaxChannels: 25})
 	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
 	// Create and run consumers
 	// dummy cunsomer
-	smsConsumer, err := rabbitmq.NewConsumer(conn, "sms", "sms")
+	smsConsumer, err := rabbitmq.NewConsumer(conn, "sms", "sms", rabbitmq.QueueOptions{
+		Durable:    true,
+		AutoDelete: false,
+		Exclusive:  false,
+		NoWait:     false,
+		Args:       nil,
+	})
 	failOnError(err, "start cunsomer sms")
 	log.Print("start sms consumer")
 	go smsConsumer.Start(ctx, messageHandlerPrintOnly)
 
 	// // creation cunsomer
-	creationConsumer, err := rabbitmq.NewConsumer(conn, "CunsomerCreation", "cunsomer-creation")
+	creationConsumer, err := rabbitmq.NewConsumer(conn, "CunsomerCreation", "consumer-creation", rabbitmq.QueueOptions{
+		Durable:    true,
+		AutoDelete: false,
+		Exclusive:  false,
+		NoWait:     false,
+		Args:       nil,
+	})
 	failOnError(err, "start creation cunsomer")
 	log.Print("start CunsomerCreation consumer")
 	go creationConsumer.Start(ctx, messageHandlerCreateCunsomer)
@@ -80,7 +90,13 @@ func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q str
 		}
 
 		log.Printf("Creating consumer %s", cunsomerCreate.Name)
-		newCunsomer, err := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName)
+		newCunsomer, err := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName, rabbitmq.QueueOptions{
+			Durable:    true,
+			AutoDelete: false,
+			Exclusive:  false,
+			NoWait:     false,
+			Args:       nil,
+		})
 		if err != nil {
 			log.Printf("Create consumer [%s] Failed", cunsomerCreate.Name)
 			d.Ack(false)

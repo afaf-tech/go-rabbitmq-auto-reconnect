@@ -1,7 +1,7 @@
 package rabbitmq
 
 import (
-	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -10,61 +10,91 @@ import (
 )
 
 const (
-	retryDuration = time.Second * 5
+	defaultRetryDuration = time.Second * 5
+	defaultURI           = "amqp://guest:guest@localhost:5672/" // Default RabbitMQ URI
+	defaultMaxChannels   = 10                                   // Default maximum number of channels
 )
 
+// TODO: logger interface config
+// Config holds the configuration for connecting to RabbitMQ
 type Config struct {
-	*amqp.Config
+	URI           string        // URI for RabbitMQ connection (e.g., "amqp://guest:guest@localhost:5672/")
+	RetryDuration time.Duration // Time to wait before retrying a failed connection attempt
+	AMQPConfig    *amqp.Config  // AMQP-specific configuration, can be nil to use defaults
+	MaxChannels   int           // Maximum number of channels allowed (default is 10)
 }
 
+// Connection wraps the actual AMQP connection and provides reconnection logic
 type Connection struct {
 	*amqp.Connection
-	config       *amqp.Config
-	uri          string
-	mu           sync.RWMutex // Mutex to synchronize access to the connection
-	reconnecting bool         // Flag to indicate ongoing reconnection
+	config       *Config           // Custom configuration for the connection
+	mu           sync.RWMutex      // Mutex to synchronize access to the connection
+	reconnecting bool              // Flag to indicate ongoing reconnection
+	channels     [](*amqp.Channel) // Slice to hold active channels
 }
 
-// TODO: add config parameter amqp.Config{}
-// NewConnection creates a new Connection object without establishing the connection
-func NewConnection(url string, config *amqp.Config) *Connection {
-
-	return &Connection{uri: url, config: config}
+// QueueOptions defines RabbitMQ queue configurations
+type QueueOptions struct {
+	Durable    bool
+	AutoDelete bool
+	Exclusive  bool
+	NoWait     bool
+	Args       amqp.Table
 }
 
-// Connect establishes the RabbitMQ connection
+// NewConnection creates a new Connection object and initializes it with the provided configuration
+func NewConnection(config *Config) *Connection {
+	// Use default values if not provided
+	if config.URI == "" {
+		config.URI = defaultURI
+	}
+	if config.RetryDuration == 0 {
+		config.RetryDuration = defaultRetryDuration
+	}
+	if config.AMQPConfig == nil {
+		config.AMQPConfig = &amqp.Config{} // Use default AMQP config if none is provided
+	}
+	if config.MaxChannels == 0 {
+		config.MaxChannels = defaultMaxChannels
+	}
+
+	return &Connection{
+		config:   config,
+		channels: make([]*amqp.Channel, 0, config.MaxChannels), // Pre-allocate slice for channels
+	}
+}
+
+// Connect establishes the RabbitMQ connection with automatic retry on failure
 func (c *Connection) Connect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.reconnecting {
-		return nil // Already in the process of reconnecting
+		return nil // Skip if already reconnecting
 	}
 
 	for {
-		conn, err := amqp.DialConfig(c.uri, *c.config)
+		conn, err := amqp.DialConfig(c.config.URI, *c.config.AMQPConfig)
 		if err == nil {
 			log.Println("Connected to RabbitMQ")
 			c.Connection = conn
 			c.reconnecting = false
-
 			return nil
 		}
 
-		if err, ok := err.(*amqp.Error); ok {
-			// Handle AMQP errors
-			log.Printf("AMQP Error: Code=%d, Reason=%s. Retrying...", err.Code, err.Reason)
+		// Handle AMQP-specific errors or other types of errors
+		if amqpErr, ok := err.(*amqp.Error); ok {
+			log.Printf("AMQP Error: Code=%d, Reason=%s. Retrying...", amqpErr.Code, amqpErr.Reason)
 		} else {
-			// Handle other errors
 			log.Printf("Failed to connect to RabbitMQ: %v. Retrying in 5 seconds.", err)
 		}
 
 		c.reconnecting = true
-		time.Sleep(retryDuration) // Adjust the delay as needed
+		time.Sleep(c.config.RetryDuration) // Retry after a delay
 	}
-
 }
 
+// Reconnect attempts to reconnect if the connection was lost
 func (c *Connection) Reconnect() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -76,7 +106,7 @@ func (c *Connection) Reconnect() error {
 
 	c.reconnecting = true
 
-	conn, err := amqp.DialConfig(c.uri, *c.config)
+	conn, err := amqp.DialConfig(c.config.URI, *c.config.AMQPConfig)
 	if err == nil {
 		log.Println("Connected to RabbitMQ")
 		c.Connection = conn
@@ -85,11 +115,11 @@ func (c *Connection) Reconnect() error {
 	}
 
 	log.Printf("Failed to reconnect to RabbitMQ: %v. Retrying in 5 seconds.", err)
-
 	c.reconnecting = false
 	return err
 }
 
+// IsClosed checks if the RabbitMQ connection is closed
 func (c *Connection) IsClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -97,116 +127,79 @@ func (c *Connection) IsClosed() bool {
 	return c.Connection == nil || c.Connection.IsClosed()
 }
 
+// Close closes the RabbitMQ connection and all open channels
 func (c *Connection) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.Connection != nil {
-		err := c.Connection.Close()
+		// Close all channels before closing the connection
+		for _, ch := range c.channels {
+			if ch != nil {
+				_ = ch.Close()
+			}
+		}
 		c.Connection = nil
-		return err
+		return c.Connection.Close()
 	}
 	return nil
 }
 
-type Consumer struct {
-	conn      *Connection
-	channel   *amqp.Channel
-	queueName string
-	name      string
-}
+// OpenChannel opens a new channel with retry logic, ensuring it doesn't exceed MaxChannels
+func (c *Connection) OpenChannel() (*amqp.Channel, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
-func NewConsumer(conn *Connection, name, queue string) (*Consumer, error) {
-	//TODO: add option to bind/declare queue?
-	ch, err := conn.Channel()
-	if err != nil {
-		log.Printf("[%s], Failed to open a channel", name)
-		return nil, err
+	if len(c.channels) >= c.config.MaxChannels {
+		return nil, fmt.Errorf("maximum number of channels (%d) reached", c.config.MaxChannels)
 	}
 
-	_, err = ch.QueueDeclare(
-		queue, // name
-		true,  // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	)
-	if err != nil {
-		log.Printf("[%s], Failed to declare queue", name)
-		defer ch.Close()
-		return nil, err
-	}
-
-	return &Consumer{
-		conn:      conn,
-		channel:   ch,
-		queueName: queue,
-		name:      name,
-	}, nil
-}
-
-// Start begins the consumer's main loop
-func (c *Consumer) Start(ctx context.Context, fn func(*Connection, string, string, *<-chan amqp.Delivery)) {
+	var channel *amqp.Channel
 	var err error
+	retryDuration := c.config.RetryDuration
 
-	for {
-		err = c.checkConnection()
-		if err != nil {
-			time.Sleep(retryDuration)
-			continue
+	for attempts := 0; attempts < 5; attempts++ { // Retry up to 5 times, for example
+		channel, err = c.Connection.Channel()
+		if err == nil {
+			// Add the new channel to the list of channels
+			c.channels = append(c.channels, channel)
+			return channel, nil
 		}
 
-		// Register the consumer and handle any errors
-		msgs, err := c.channel.ConsumeWithContext(
-			ctx,
-			c.queueName, // queue
-			c.name,      // consumer
-			false,       // auto-ack
-			false,       // exclusive
-			false,       // no-local
-			false,       // no-wait
-			nil,         // args
-		)
-		if err != nil {
-			log.Printf("[%s] Failed to register a consumer: %v. Retrying in 5 seconds.", c.name, err)
-			time.Sleep(retryDuration)
-			continue
-		}
-
-		// Execute the user-defined function
-		fn(c.conn, c.name, c.queueName, &msgs)
-
-		// Close the channel after consuming messages
-		if c.channel != nil {
-			c.channel.Close()
-		}
+		log.Printf("Failed to open channel: %v. Retrying in %v...", err, retryDuration)
+		time.Sleep(retryDuration)
 	}
+
+	return nil, fmt.Errorf("failed to open channel after retries: %w", err)
 }
 
-func (c *Consumer) checkConnection() error {
-	var err error
-	if c.conn.IsClosed() {
-		log.Printf("[%s] Connection is closed. Attempting to reconnect...", c.name)
-		err = c.conn.Reconnect()
+// ReconnectChannel attempts to reconnect a channel if it's lost
+func (c *Connection) ReconnectChannel(channel *amqp.Channel) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// Logic for determining if the channel is closed or broken (could use specific error types)
+	if channel != nil && channel.IsClosed() {
+		log.Printf("Channel is closed, attempting to reopen it...")
+		// Try to open a new channel
+		newChannel, err := c.OpenChannel()
 		if err != nil {
-			log.Printf("[%s] Failed to reconnect: %v. Retrying in 5 seconds.", c.name, err)
-			return err
+			return fmt.Errorf("failed to reconnect channel: %w", err)
 		}
-		log.Printf("[%s] Reconnected to RabbitMQ", c.name)
+
+		// Replace the closed channel with the new one
+		for i, ch := range c.channels {
+			if ch == channel {
+				c.channels[i] = newChannel
+				break
+			}
+		}
+
+		log.Println("Successfully reconnected channel.")
+		return nil
 	}
 
-	if c.channel == nil || c.channel.IsClosed() {
-		log.Printf("[%s] Channel is nil or closed. Trying to reopen...", c.name)
-		c.channel, err = c.conn.Channel()
-		if err != nil {
-			log.Printf("[%s] Failed to reopen channel: %v. Retrying in 5 seconds.", c.name, err)
-			return err
-		}
-		log.Printf("[%s] Channel reopened", c.name)
-	}
-
-	return err
+	return nil
 }
 
 // failOnError logs an error and exits the application if the error is not nil
@@ -215,11 +208,3 @@ func failOnError(err error, msg string) {
 		log.Fatalf("%s: %s", msg, err)
 	}
 }
-
-// TODO: Producer?
-/*
-// Producer represents a RabbitMQ Pbulisher
-type Publisher struct {
-	connection *Connection
-	exchange   string
-} */
