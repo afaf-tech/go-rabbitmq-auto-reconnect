@@ -33,17 +33,8 @@ func main() {
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
 
-	// Define queue options
-	queueOptions := rabbitmq.QueueOptions{
-		Durable:    true,
-		AutoDelete: false,
-		Exclusive:  false,
-		NoWait:     false,
-		Args:       nil,
-	}
-
 	// Initialize producers
-	consumerCreateProducer, err := rabbitmq.NewProducer(conn, "consumer-create-producer", "consumer-creation", queueOptions)
+	consumerCreateProducer, err := rabbitmq.NewProducer(conn, "consumer-create-producer", "consumer-creation")
 	failOnError(err, "Failed to create consumer creation producer")
 	defer consumerCreateProducer.Close()
 
@@ -67,10 +58,8 @@ func main() {
 
 		if input == "exit" {
 			break // Exit the loop on 'exit' command
-
 		}
 
-		// TODO: producer can't handle reconnection
 		switch input {
 		case "notif":
 			// Prompt user for the queue name
@@ -83,7 +72,7 @@ func main() {
 			queueName := scanner.Text()
 
 			// Create new notification producer with dynamic queue name
-			dynamicNotifProducer, err := rabbitmq.NewProducer(conn, "notif-producer", queueName, queueOptions)
+			dynamicNotifProducer, err := rabbitmq.NewProducer(conn, "notif-producer", queueName)
 			if err != nil {
 				log.Printf("Failed to create dynamic notification producer for queue %s: %v", queueName, err)
 				continue
@@ -118,7 +107,18 @@ func main() {
 				log.Fatalf("Failed to marshal notification: %v", err)
 			}
 
-			err = dynamicNotifProducer.Publish(context.Background(), message)
+			// Define publishing options
+			publishOpts := rabbitmq.PublishOptions{
+				Exchange:    "",        // Default exchange
+				RoutingKey:  queueName, // Use the queue name as routing key
+				ContentType: "application/json",
+				Body:        message,
+				Mandatory:   false,
+				Immediate:   false,
+				Headers:     nil,
+			}
+
+			err = dynamicNotifProducer.Publish(context.Background(), message, publishOpts)
 			if err != nil {
 				log.Printf("Failed to publish notification: %v", err)
 			} else {
@@ -145,7 +145,7 @@ func main() {
 			// Create consumer creation request and publish to RabbitMQ
 			consumerCreate := ConsumerCreate{
 				Name:      name,
-				QueueName: queueName, // Example queue name
+				QueueName: queueName,
 			}
 
 			message, err := json.Marshal(consumerCreate)
@@ -153,7 +153,18 @@ func main() {
 				log.Fatalf("Failed to marshal consumer creation: %v", err)
 			}
 
-			err = consumerCreateProducer.Publish(context.Background(), message)
+			// Define publishing options
+			publishOpts := rabbitmq.PublishOptions{
+				Exchange:    "",                  // Default exchange
+				RoutingKey:  "consumer-creation", // Static routing key for consumer creation
+				ContentType: "application/json",
+				Body:        message,
+				Mandatory:   false,
+				Immediate:   false,
+				Headers:     nil,
+			}
+
+			err = consumerCreateProducer.Publish(context.Background(), message, publishOpts)
 			if err != nil {
 				log.Printf("Failed to publish consumer creation request: %v", err)
 			} else {

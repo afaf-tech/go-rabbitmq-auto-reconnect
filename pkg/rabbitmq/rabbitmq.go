@@ -169,23 +169,14 @@ func (c *Connection) OpenChannel() (*amqp.Channel, error) {
 	return nil, fmt.Errorf("failed to open channel after retries: %w", err)
 }
 
-// cleanupClosedChannels removes closed channels from the list
 func (c *Connection) cleanupClosedChannels() {
 	var openChannels []*amqp.Channel
 	for _, ch := range c.channels {
 		if ch != nil && !ch.IsClosed() {
 			openChannels = append(openChannels, ch)
 		} else if ch != nil {
-			log.Printf("Channel closed, removing from active channels.")
-			_ = ch.Close() // Close the channel if it was marked closed
+			_ = ch.Close() // remove closed channel
 		}
 	}
 	c.channels = openChannels
-}
-
-// failOnError logs an error and exits the application if the error is not nil
-func failOnError(err error, msg string) {
-	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
-	}
 }
