@@ -18,7 +18,7 @@ func main() {
 
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn := rabbitmq.NewConnection(&rabbitmq.Config{URI: rbmqURI, MaxChannels: 25})
+	conn := rabbitmq.NewConnection(&rabbitmq.Config{URI: rbmqURI, MaxChannels: 4})
 	err := conn.Connect()
 	failOnError(err, "Failed to connect to RabbitMQ")
 	defer conn.Close()
