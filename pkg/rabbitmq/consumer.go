@@ -18,14 +18,6 @@ type Consumer struct {
 
 // NewConsumer initializes a new Consumer instance and declares the queue with the specified options
 func NewConsumer(conn *Connection, name, queue string, options QueueOptions) (*Consumer, error) {
-	// Ensure the connection is established
-	err := conn.Connect()
-	if err != nil {
-		log.Printf("[%s] Failed to connect to RabbitMQ", name)
-		return nil, err
-	}
-
-	// Create a new channel
 	ch, err := conn.OpenChannel()
 	if err != nil {
 		log.Printf("[%s] Failed to open a channel", name)

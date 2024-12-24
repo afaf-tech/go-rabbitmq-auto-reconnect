@@ -9,46 +9,49 @@ import (
 )
 
 type Producer struct {
-	conn        *Connection
-	channel     *amqp.Channel
-	queueName   string
-	name        string
-	queueConfig QueueOptions
+	conn      *Connection
+	channel   *amqp.Channel
+	queueName string
+	name      string
 }
 
 // NewProducer initializes a new Producer instance and declares the queue with the specified options
-func NewProducer(conn *Connection, name, queue string, options QueueOptions) (*Producer, error) {
-	ch, err := conn.OpenChannel() // Use the OpenChannel method which ensures auto-reconnection
+func NewProducer(conn *Connection, name, queue string) (*Producer, error) {
+	// Ensure the connection is established
+	if conn.IsClosed() {
+		err := conn.Connect()
+		if err != nil {
+			log.Printf("[%s] Failed to connect to RabbitMQ", name)
+			return nil, err
+		}
+	}
+
+	ch, err := conn.OpenChannel()
 	if err != nil {
 		log.Printf("[%s] Failed to open a channel", name)
 		return nil, err
 	}
 
-	_, err = ch.QueueDeclare(
-		queue,
-		options.Durable,
-		options.AutoDelete,
-		options.Exclusive,
-		options.NoWait,
-		options.Args,
-	)
-	if err != nil {
-		log.Printf("[%s] Failed to declare queue: %v", name, err)
-		defer ch.Close()
-		return nil, err
-	}
-
 	return &Producer{
-		conn:        conn,
-		channel:     ch,
-		queueName:   queue,
-		name:        name,
-		queueConfig: options,
+		conn:      conn,
+		channel:   ch,
+		queueName: queue,
+		name:      name,
 	}, nil
 }
 
+type PublishOptions struct {
+	Exchange    string     // The exchange to publish the message to
+	RoutingKey  string     // The routing key to use for the message
+	ContentType string     // The content type of the message (e.g., "text/plain")
+	Body        []byte     // The actual message body
+	Mandatory   bool       // Whether the message is mandatory
+	Immediate   bool       // Whether the message is immediate
+	Headers     amqp.Table // Optional headers for the message
+}
+
 // Publish sends a message to the queue with retry logic and context support
-func (p *Producer) Publish(ctx context.Context, message []byte) error {
+func (p *Producer) Publish(ctx context.Context, message []byte, options PublishOptions) error {
 	if ctx == nil {
 		// Default to a background context with a timeout
 		defaultCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -63,7 +66,6 @@ func (p *Producer) Publish(ctx context.Context, message []byte) error {
 		// Check if connection or channel is closed, attempt to reconnect if necessary
 		err := p.checkConnection()
 		if err != nil {
-			log.Printf("[%s] Connection or channel issue: %v. Retrying in %v...", p.name, err, retryDuration)
 			time.Sleep(retryDuration)
 			continue
 		}
@@ -71,13 +73,14 @@ func (p *Producer) Publish(ctx context.Context, message []byte) error {
 		// Attempt to publish the message
 		err = p.channel.PublishWithContext(
 			ctx,
-			"",          // exchange
-			p.queueName, // routing key
-			false,       // mandatory
-			false,       // immediate
+			options.Exchange,   // Use the exchange from the options
+			options.RoutingKey, // Use the routing key from the options
+			options.Mandatory,  // Use the mandatory flag from the options
+			options.Immediate,  // Use the immediate flag from the options
 			amqp.Publishing{
-				ContentType: "text/plain",
-				Body:        message,
+				ContentType: options.ContentType, // Use the content type from the options
+				Body:        options.Body,        // Use the message body from the options
+				Headers:     options.Headers,     // Use the headers from the options (if any)
 			},
 		)
 
