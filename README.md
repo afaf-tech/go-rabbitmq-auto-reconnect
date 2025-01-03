@@ -1,9 +1,21 @@
-# Go RabbitMQ Auto-Reconnect Project
+# Go Package Playground
 
-This project demonstrates a simple implementation of a RabbitMQ consumer and producer in Go with automatic reconnection capabilities.
+Welcome to the **Go Package Playground**! This project serves as a playground for experimenting with different Go packages. The goal is to explore various Go packages and concepts in real-world scenarios.
 
-Explores the hypothesis of using a single connection for many channels, both for producers and consumers, in a RabbitMQ setup. This architectural choice aims to optimize resource usage and improve performance in scenarios with a large number of channels.
+The project is structured with package definitions under the `pkg` folder and implementations under the `apps` folder to demonstrate practical use cases and integrations.
 
+## Project Structure
+    .
+    ├── apps
+    │   ├── consumer            # Consumer service
+    │   ├── producer            # Producer service
+    ├── pkg                    
+    │   ├── rabbitmq            # RabbitMQ package
+    └── go.work
+    └── docker-compose.yml
+    └── README.md
+    └── LICENSE.md
+    └── ...
 ## Official Package 
 go to https://github.com/afaf-tech/go-rabbitmq
 
