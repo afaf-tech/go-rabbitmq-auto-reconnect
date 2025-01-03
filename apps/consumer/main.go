@@ -7,10 +7,10 @@ import (
 	"os"
 	"os/signal"
 
-	amqp "github.com/rabbitmq/amqp091-go"
-
 	"afaf.internal/pkg/rabbitmq"
 )
+
+var conn *rabbitmq.Connection
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -18,101 +18,58 @@ func main() {
 
 	const rbmqURI = "amqp://guest:guest@localhost:5672/"
 
-	conn := rabbitmq.NewConnection(&rabbitmq.Config{URI: rbmqURI, MaxChannels: 4})
-	err := conn.Connect()
-	failOnError(err, "Failed to connect to RabbitMQ")
+	conn = rabbitmq.NewConnection(&rabbitmq.Config{URI: rbmqURI, MaxChannels: 4})
+	if err := conn.Connect(); err != nil {
+		log.Fatalf("Failed to connect to RabbitMQ: %v", err)
+	}
 	defer conn.Close()
 
-	// Create and run consumers
-	// dummy cunsomer
-	smsConsumer, err := rabbitmq.NewConsumer(conn, "sms", "sms", rabbitmq.QueueOptions{
-		Durable:    true,
-		AutoDelete: false,
-		Exclusive:  false,
-		NoWait:     false,
-		Args:       nil,
-	})
-	failOnError(err, "start cunsomer sms")
+	// Start consumers
+	startConsumer(ctx, conn, "sms", "sms", messageHandlerPrintOnly)
 	log.Print("start sms consumer")
-	go smsConsumer.Start(ctx, messageHandlerPrintOnly)
-
-	// // creation cunsomer
-	creationConsumer, err := rabbitmq.NewConsumer(conn, "CunsomerCreation", "consumer-creation", rabbitmq.QueueOptions{
-		Durable:    true,
-		AutoDelete: false,
-		Exclusive:  false,
-		NoWait:     false,
-		Args:       nil,
-	})
-	failOnError(err, "start creation cunsomer")
+	startConsumer(ctx, conn, "ConsumerCreation", "consumer-creation", messageHandlerCreateConsumer)
 	log.Print("start CunsomerCreation consumer")
-	go creationConsumer.Start(ctx, messageHandlerCreateCunsomer)
 
 	// Wait for interrupt signal to gracefully shutdown
 	signalCh := make(chan os.Signal, 1)
 	signal.Notify(signalCh, os.Interrupt)
-
-	// Block until a signal is received
 	<-signalCh
 
-	// Optionally: Gracefully shutdown consumers
-	cancel() // Signal the context to cancel
+	cancel() // Stop all consumers
 }
 
-// Sample struct
-type Notif struct {
-	Title   string `json:"title"`
-	Content string `json:"content"`
-}
-
-func messageHandlerPrintOnly(conn *rabbitmq.Connection, cName string, q string, deliveries *<-chan amqp.Delivery) {
-	for d := range *deliveries {
-		//handle the custom message
-		log.Printf("Got message from consumer %s, queue %s, message %s", cName, q, d.Body)
-		d.Ack(false)
-	}
-}
-
-type CunsomerCreate struct {
-	Name      string `json:"name"`
-	QueueName string `json:"queue_name"`
-}
-
-func messageHandlerCreateCunsomer(conn *rabbitmq.Connection, cName string, q string, deliveries *<-chan amqp.Delivery) {
-	for d := range *deliveries {
-		log.Printf("Got message from consumer %s, queue %s, message %s", cName, q, d.Body)
-
-		var cunsomerCreate CunsomerCreate
-		err := json.Unmarshal(d.Body, &cunsomerCreate)
-		if err != nil {
-			log.Printf("err parsing %s", err.Error())
-			continue
-		}
-
-		log.Printf("Creating consumer %s", cunsomerCreate.Name)
-		newCunsomer, err := rabbitmq.NewConsumer(conn, cunsomerCreate.Name, cunsomerCreate.QueueName, rabbitmq.QueueOptions{
-			Durable:    true,
-			AutoDelete: false,
-			Exclusive:  false,
-			NoWait:     false,
-			Args:       nil,
-		})
-		if err != nil {
-			log.Printf("Create consumer [%s] Failed", cunsomerCreate.Name)
-			d.Ack(false)
-			continue
-		}
-
-		// Start the new consumer in a goroutine
-		go newCunsomer.Start(context.Background(), messageHandlerPrintOnly)
-
-		d.Ack(false)
-	}
-}
-
-// failOnError logs an error and exits the application if the error is not nil
-func failOnError(err error, msg string) {
+func startConsumer(ctx context.Context, conn *rabbitmq.Connection, name, queue string, handler func(ctx context.Context, msg *rabbitmq.Message)) {
+	consumer, err := rabbitmq.NewConsumer(conn, name, queue, rabbitmq.QueueOptions{
+		Durable:    true,
+		AutoDelete: false,
+		Exclusive:  false,
+		NoWait:     false,
+	})
 	if err != nil {
-		log.Fatalf("%s: %s", msg, err)
+		log.Fatalf("Failed to create consumer [%s]: %v", name, err)
 	}
+
+	go consumer.Start(ctx, handler)
+}
+
+func messageHandlerPrintOnly(ctx context.Context, msg *rabbitmq.Message) {
+	log.Printf("Consumer [%s] received message on queue [%s]: %s", msg.ConsumerID, msg.QueueName, msg.Body)
+	msg.Ack()
+}
+
+func messageHandlerCreateConsumer(ctx context.Context, msg *rabbitmq.Message) {
+	var payload struct {
+		Name      string `json:"name"`
+		QueueName string `json:"queue_name"`
+	}
+
+	if err := json.Unmarshal(msg.Body, &payload); err != nil {
+		log.Printf("Failed to unmarshal message: %v", err)
+		msg.Nack()
+		return
+	}
+
+	log.Printf("Creating consumer: %s", payload.Name)
+	startConsumer(ctx, conn, payload.Name, payload.QueueName, messageHandlerPrintOnly)
+	msg.Ack()
 }
