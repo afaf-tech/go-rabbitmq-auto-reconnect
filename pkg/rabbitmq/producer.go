@@ -8,11 +8,23 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+// Producer represents an AMQP producer that sends messages to a specified RabbitMQ queue.
 type Producer struct {
-	conn      *Connection
-	channel   *amqp.Channel
+	// conn is the underlying AMQP connection that this producer uses to communicate with the RabbitMQ broker.
+	// It provides the connection functionality for creating channels and sending messages.
+	conn *Connection
+
+	// channel is the AMQP channel used by this producer to publish messages to RabbitMQ.
+	// A channel is a lightweight connection to the broker and is used to send and receive messages.
+	channel *amqp.Channel
+
+	// queueName is the name of the RabbitMQ queue to which this producer sends messages.
+	// It identifies the target queue for message delivery.
 	queueName string
-	name      string
+
+	// name is the unique name of this producer, often used for logging or identifying the producer.
+	// It helps distinguish multiple producers in the system.
+	name string
 }
 
 // NewProducer initializes a new Producer instance and declares the queue with the specified options
@@ -40,14 +52,35 @@ func NewProducer(conn *Connection, name, queue string) (*Producer, error) {
 	}, nil
 }
 
+// PublishOptions represents the configuration options for publishing a message to RabbitMQ.
 type PublishOptions struct {
-	Exchange    string     // The exchange to publish the message to
-	RoutingKey  string     // The routing key to use for the message
-	ContentType string     // The content type of the message (e.g., "text/plain")
-	Body        []byte     // The actual message body
-	Mandatory   bool       // Whether the message is mandatory
-	Immediate   bool       // Whether the message is immediate
-	Headers     amqp.Table // Optional headers for the message
+	// Exchange is the name of the exchange to which the message will be published.
+	// The exchange determines how the message will be routed to queues.
+	Exchange string
+
+	// RoutingKey is the routing key used by the exchange to decide where to route the message.
+	// The value depends on the type of exchange (e.g., direct, topic).
+	RoutingKey string
+
+	// ContentType specifies the content type of the message. It helps the consumer interpret the message body.
+	// For example, "text/plain" or "application/json".
+	ContentType string
+
+	// Body is the actual message content, represented as a byte slice.
+	// This is the payload of the message being sent to the RabbitMQ exchange.
+	Body []byte
+
+	// Mandatory indicates whether the message is mandatory.
+	// If true, RabbitMQ will return the message to the producer if it cannot be routed to a queue.
+	Mandatory bool
+
+	// Immediate indicates whether the message is immediate.
+	// If true, RabbitMQ will try to deliver the message to a consumer immediately, if possible.
+	Immediate bool
+
+	// Headers is an optional map of headers that can be included with the message.
+	// These headers can carry metadata or additional information to help the consumer process the message.
+	Headers amqp.Table
 }
 
 // Publish sends a message to the queue with retry logic and context support

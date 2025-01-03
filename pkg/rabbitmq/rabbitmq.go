@@ -9,13 +9,35 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// QueueOptions defines RabbitMQ queue configurations
+// QueueOptions represents the configuration options for declaring a queue in RabbitMQ.
 type QueueOptions struct {
-	Durable    bool
+	// Durable specifies whether the queue should survive broker restarts. If true, the queue will
+	// be durable, meaning it will persist even if RabbitMQ crashes or restarts.
+	Durable bool
+
+	// AutoAck enables or disables automatic message acknowledgment. If true, messages are automatically
+	// acknowledged by the broker once they are received by the consumer.
+	AutoAck bool
+
+	// AutoDelete determines whether the queue should be automatically deleted when no consumers are
+	// connected. If true, the queue will be deleted when the last consumer disconnects.
 	AutoDelete bool
-	Exclusive  bool
-	NoWait     bool
-	Args       amqp.Table
+
+	// Exclusive makes the queue private to the connection that created it. If true, the queue can only
+	// be used by the connection that declared it and will be deleted once that connection closes.
+	Exclusive bool
+
+	// NoWait prevents the server from sending a response to the queue declaration. If true, the declaration
+	// will not wait for an acknowledgment from the server and no error will be returned if the queue already exists.
+	NoWait bool
+
+	// NoLocal prevents the delivery of messages to the connection that published them. If true, messages
+	// will not be delivered to the connection that created the queue.
+	NoLocal bool
+
+	// Args allows additional arguments to be passed when declaring the queue. This can be used for advanced
+	// RabbitMQ configurations, such as setting arguments for policies or defining queue TTLs (Time-To-Live).
+	Args amqp.Table
 }
 
 const (
@@ -24,21 +46,48 @@ const (
 	defaultMaxChannels   = 10                                   // Default maximum number of channels
 )
 
-// Config holds the configuration for connecting to RabbitMQ
+// Config holds the configuration options for establishing a RabbitMQ connection and managing
+// consumer channels.
 type Config struct {
-	URI           string        // URI for RabbitMQ connection (e.g., "amqp://guest:guest@localhost:5672/")
-	RetryDuration time.Duration // Time to wait before retrying a failed connection attempt
-	AMQPConfig    *amqp.Config  // AMQP-specific configuration, can be nil to use defaults
-	MaxChannels   int           // Maximum number of channels allowed (default is 10)
+	// URI is the connection string for RabbitMQ. It should follow the AMQP URI format, e.g.,
+	// "amqp://guest:guest@localhost:5672/". It is used to establish the connection to the RabbitMQ broker.
+	URI string
+
+	// RetryDuration specifies the time duration to wait before retrying a failed connection attempt.
+	// This is useful to implement a backoff strategy in case of temporary network issues.
+	RetryDuration time.Duration
+
+	// AMQPConfig holds AMQP-specific configuration options. If nil, default AMQP configurations
+	// are used. This can include settings like heartbeat intervals and other advanced AMQP features.
+	AMQPConfig *amqp.Config
+
+	// MaxChannels defines the maximum number of channels that can be opened to the RabbitMQ server.
+	// If the value is 0 or negative, the default is used (which may be 10 channels).
+	MaxChannels int
 }
 
-// Connection wraps the actual AMQP connection and provides reconnection logic
+// Connection wraps the actual AMQP connection and provides reconnection logic, ensuring
+// that the connection and channels remain active or are re-established when necessary.
 type Connection struct {
+	// Connection is the underlying AMQP connection provided by the AMQP client library.
+	// It provides the basic connection functionalities such as opening channels, closing the connection, etc.
 	*amqp.Connection
-	config       *Config         // Custom configuration for the connection
-	mu           sync.RWMutex    // Mutex to synchronize access to the connection
-	reconnecting bool            // Flag to indicate ongoing reconnection
-	channels     []*amqp.Channel // Slice to hold active channels
+
+	// config holds the custom configuration settings for the RabbitMQ connection, such as URI, retry duration, etc.
+	// These settings are used for connection management and reconnection attempts.
+	config *Config
+
+	// mu is a read-write mutex used to synchronize access to the connection and channels,
+	// ensuring thread-safe operations for shared resources.
+	mu sync.RWMutex
+
+	// reconnecting is a flag indicating whether a reconnection attempt is currently in progress.
+	// This is used to prevent multiple concurrent reconnection attempts.
+	reconnecting bool
+
+	// channels holds a slice of active channels associated with the current connection.
+	// Channels are used to send and receive messages within a specific connection context.
+	channels []*amqp.Channel
 }
 
 // NewConnection creates a new Connection object and initializes it with the provided configuration
